@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     secret_key: str = "local-development-only-change-me"
     access_token_expire_minutes: int = 30
     algorithm: str = "HS256"
+    media_dir: str = "uploads"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

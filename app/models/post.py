@@ -17,3 +17,6 @@ class Post(Base):
     )
 
     author: Mapped["User"] = relationship(back_populates="posts")
+    media: Mapped[list["MediaAsset"]] = relationship(
+        back_populates="post", cascade="all, delete-orphan"
+    )
