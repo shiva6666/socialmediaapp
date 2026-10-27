@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import Base, engine
-from app.models import Comment, Follow, Like, MediaAsset, Notification, Post, User  # noqa: F401 - register models with SQLAlchemy metadata
+from app.models import AnalyticsEvent, Comment, Follow, Like, MediaAsset, Notification, Post, User  # noqa: F401 - register models with SQLAlchemy metadata
 
 
 @asynccontextmanager
