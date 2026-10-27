@@ -9,6 +9,7 @@ from app.models.like import Like
 from app.models.post import Post
 from app.models.user import User
 from app.schemas.comment import CommentCreate, CommentRead, LikeCount
+from app.services.notifications import add_notification
 
 router = APIRouter()
 
@@ -26,10 +27,17 @@ def like_post(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    get_post_or_404(post_id, db)
+    post = get_post_or_404(post_id, db)
     existing_like = db.get(Like, (current_user.id, post_id))
     if existing_like is None:
         db.add(Like(user_id=current_user.id, post_id=post_id))
+        add_notification(
+            db,
+            recipient_id=post.author_id,
+            actor_id=current_user.id,
+            event_type="like",
+            post_id=post.id,
+        )
         db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -66,9 +74,16 @@ def create_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Comment:
-    get_post_or_404(post_id, db)
+    post = get_post_or_404(post_id, db)
     comment = Comment(post_id=post_id, user_id=current_user.id, body=payload.body)
     db.add(comment)
+    add_notification(
+        db,
+        recipient_id=post.author_id,
+        actor_id=current_user.id,
+        event_type="comment",
+        post_id=post.id,
+    )
     db.commit()
     db.refresh(comment)
     return comment

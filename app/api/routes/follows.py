@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models.follow import Follow
 from app.models.user import User
+from app.services.notifications import add_notification
 
 router = APIRouter()
 
@@ -28,6 +29,12 @@ def follow_user(
         return None
 
     db.add(Follow(follower_id=current_user.id, following_id=target_user.id))
+    add_notification(
+        db,
+        recipient_id=target_user.id,
+        actor_id=current_user.id,
+        event_type="follow",
+    )
     try:
         db.commit()
     except IntegrityError:

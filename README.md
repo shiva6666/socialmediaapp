@@ -27,6 +27,8 @@ Open `http://127.0.0.1:8000/docs` for the interactive API docs.
 - `DELETE /api/v1/posts/{post_id}` — delete your post (authentication required)
 - `POST /api/v1/posts/{post_id}/media` — upload an image to your post (authentication required; JPEG, PNG, or WebP, up to 10 MB)
 - `DELETE /api/v1/posts/{post_id}/media/{media_id}` — remove an image from your post (authentication required)
+- `GET /api/v1/notifications` — list your notifications (authentication required; supports `unread_only`, `limit`, and `offset`)
+- `PATCH /api/v1/notifications/{notification_id}/read` — mark one notification as read (authentication required)
 - `GET /api/v1/posts/feed` — list your posts and posts from accounts you follow (authentication required)
 - `GET /api/v1/posts/users/{username}` — list a user's public posts
 - `POST /api/v1/users/{username}/follow` — follow a user (authentication required)
