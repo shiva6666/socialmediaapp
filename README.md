@@ -29,6 +29,7 @@ Open `http://127.0.0.1:8000/docs` for the interactive API docs.
 - `POST /api/v1/auth/register` — create an account
 - `POST /api/v1/auth/login` — exchange email and password for a bearer token
 - `GET /api/v1/auth/me` — return the current user's profile (send `Authorization: Bearer <token>`)
+- `PATCH /api/v1/users/me` — update your username or display name (authentication required)
 - `POST /api/v1/posts` — publish a text post (authentication required)
 - `PATCH /api/v1/posts/{post_id}` — edit your post text (authentication required)
 - `DELETE /api/v1/posts/{post_id}` — delete your post (authentication required)
