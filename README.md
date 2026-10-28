@@ -10,6 +10,9 @@ publish text posts, read a chronological feed, interact with posts, and receive 
 
 The diagram shows the larger system this project is working toward. The current code is a
 single FastAPI application; its features are modules in that app rather than separate services.
+For a walkthrough of the current Redis feed cache, notification flow, and backend design
+choices, see the [Redis backend learning guide](docs/redis-backend-learning-guide.md) and
+its [editable Excalidraw architecture diagram](docs/redis-backend-architecture.excalidraw).
 
 ## Run locally
 
@@ -19,10 +22,19 @@ source .venv/bin/activate
 python -m pip install -e .
 cp .env.example .env
 # Set SECRET_KEY in .env to a long random value before using real accounts.
+docker compose up -d redis
 uvicorn app.main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` for the interactive API docs.
+
+Redis caches each user's paginated feed for `FEED_CACHE_TTL_SECONDS` (60 seconds by
+default). Post, profile, media, and follow changes invalidate affected feed caches.
+Notification events are added to a Redis Stream after the API response and persisted by a
+background consumer; if Redis is unavailable while enqueueing, the task logs the failure
+and attempts to write the notification directly to the database. Configure Redis with
+`REDIS_URL`. Stream delivery is at-least-once: the consumer acknowledges events after the
+database commit, so an interruption between those steps can result in a duplicate notification.
 
 ## API endpoints
 

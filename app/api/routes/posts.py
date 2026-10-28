@@ -1,11 +1,20 @@
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.core.database import get_db
 from app.core.config import settings
+from app.core.database import get_db
+from app.core.feed_cache import (
+    cache_feed,
+    feed_cache_key,
+    get_cached_feed,
+    invalidate_author_feeds,
+    invalidate_feed_cache,
+)
 from app.dependencies.auth import get_current_user
 from app.models.follow import Follow
 from app.models.post import Post
@@ -13,6 +22,8 @@ from app.models.user import User
 from app.schemas.post import PostCreate, PostRead, PostUpdate
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+feed_adapter = TypeAdapter(list[PostRead])
 
 
 @router.post("", response_model=PostRead, status_code=status.HTTP_201_CREATED)
@@ -25,6 +36,7 @@ def create_post(
     db.add(post)
     db.commit()
     db.refresh(post)
+    invalidate_author_feeds(db, current_user.id)
     return post
 
 
@@ -34,7 +46,16 @@ def read_feed(
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> list[Post]:
+) -> list[PostRead]:
+    cache_key = feed_cache_key(current_user.id, limit, offset)
+    cached_feed = get_cached_feed(cache_key)
+    if cached_feed is not None:
+        try:
+            return feed_adapter.validate_json(cached_feed)
+        except (ValueError, ValidationError):
+            logger.warning("Discarding invalid cached feed for user %s", current_user.id)
+            invalidate_feed_cache([current_user.id])
+
     followed_user_ids = select(Follow.following_id).where(Follow.follower_id == current_user.id)
     query = (
         select(Post)
@@ -44,7 +65,16 @@ def read_feed(
         .offset(offset)
         .limit(limit)
     )
-    return list(db.scalars(query).all())
+    feed = [
+        PostRead.model_validate(post)
+        for post in db.scalars(query).unique().all()
+    ]
+    cache_feed(
+        cache_key,
+        feed_adapter.dump_json(feed).decode("utf-8"),
+        settings.feed_cache_ttl_seconds,
+    )
+    return feed
 
 
 @router.get("/users/{username}", response_model=list[PostRead])
@@ -88,6 +118,7 @@ def update_post(
     post.body = payload.body
     db.commit()
     db.refresh(post)
+    invalidate_author_feeds(db, current_user.id)
     return post
 
 
@@ -106,9 +137,11 @@ def delete_post(
             detail="You can only delete your own posts",
         )
 
+    author_id = post.author_id
     uploaded_files = [Path(settings.media_dir) / item.file_name for item in post.media]
     db.delete(post)
     db.commit()
+    invalidate_author_feeds(db, author_id)
     for uploaded_file in uploaded_files:
         uploaded_file.unlink(missing_ok=True)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

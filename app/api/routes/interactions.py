@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
@@ -9,7 +9,7 @@ from app.models.like import Like
 from app.models.post import Post
 from app.models.user import User
 from app.schemas.comment import CommentCreate, CommentRead, LikeCount
-from app.services.notifications import add_notification
+from app.services.notifications import queue_notification
 
 router = APIRouter()
 
@@ -24,6 +24,7 @@ def get_post_or_404(post_id: int, db: Session) -> Post:
 @router.post("/posts/{post_id}/likes", status_code=status.HTTP_204_NO_CONTENT)
 def like_post(
     post_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
@@ -31,14 +32,14 @@ def like_post(
     existing_like = db.get(Like, (current_user.id, post_id))
     if existing_like is None:
         db.add(Like(user_id=current_user.id, post_id=post_id))
-        add_notification(
-            db,
+        db.commit()
+        queue_notification(
+            background_tasks,
             recipient_id=post.author_id,
             actor_id=current_user.id,
             event_type="like",
             post_id=post.id,
         )
-        db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -71,21 +72,22 @@ def count_post_likes(post_id: int, db: Session = Depends(get_db)) -> LikeCount:
 def create_comment(
     post_id: int,
     payload: CommentCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Comment:
     post = get_post_or_404(post_id, db)
     comment = Comment(post_id=post_id, user_id=current_user.id, body=payload.body)
     db.add(comment)
-    add_notification(
-        db,
+    db.commit()
+    db.refresh(comment)
+    queue_notification(
+        background_tasks,
         recipient_id=post.author_id,
         actor_id=current_user.id,
         event_type="comment",
         post_id=post.id,
     )
-    db.commit()
-    db.refresh(comment)
     return comment
 
 

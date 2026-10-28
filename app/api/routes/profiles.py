@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.feed_cache import invalidate_author_feeds
 from app.core.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
@@ -44,4 +45,5 @@ def update_my_profile(
         ) from None
 
     db.refresh(current_user)
+    invalidate_author_feeds(db, current_user.id)
     return current_user
