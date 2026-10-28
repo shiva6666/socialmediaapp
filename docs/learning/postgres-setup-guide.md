@@ -1,10 +1,5 @@
 # From SQLite to Postgres — Everything We Did & Why
 
-> [!NOTE]
-> You have 10 years of frontend experience. Every concept here maps to something you already know. That's the lens we'll use.
-
----
-
 ## The Big Picture — What Changed
 
 ```mermaid
