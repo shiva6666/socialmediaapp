@@ -22,36 +22,32 @@
 
 ## ❌ Fundamental Missing Pieces
 
-### 🔴 1. Feed Cache (Redis)
+### ✅ 1. Feed Cache (Redis)
 **What the diagram shows:** Feed Service → Feed Cache (Redis) → Posts DB
 
-**What you have:** Every `GET /posts/feed` hits the database with a fresh SQL query — no caching at all.
+**What you have:** `GET /posts/feed` uses a Redis cache with a TTL and falls back to SQL on a
+cache miss or Redis error. Post, profile, media, and follow changes invalidate affected
+feed caches.
 
-**Why it matters:** Feed is the most-read endpoint in any social app. Without a cache, every request is a DB hit. Redis lets you pre-build and store feeds in memory (microsecond reads vs millisecond DB queries).
+**Remaining consideration:** The cache is cache-aside, not a pre-built fan-out-on-write
+feed. At larger scale, consider indexing cache keys to make invalidation more efficient.
 
-**What to build:**
-- Cache the feed result per user in Redis with a TTL
-- Invalidate/update the cache when a followed user posts
-- This is a **fan-out-on-write** pattern (Instagram's actual approach)
-
----
-
-### 🔴 2. Message Queue (Kafka / Redis Pub-Sub)
+### ✅ 2. Notification Queue (Redis Streams)
 **What the diagram shows:** Notification Service → Message Queue → Notification Workers
 
-**What you have:** Notifications are written **synchronously** inside the same DB transaction as the action:
-```python
-# In interactions.py — notification is written inline, blocking the response
-db.add(Notification(...))
-db.commit()
-```
+**What you have:** Like, comment, and follow actions commit to SQL, then schedule a
+notification event through FastAPI `BackgroundTasks` into a Redis Stream. A consumer writes
+the notification record to SQL and acknowledges the event after the commit.
 
-**Why it matters:** If notification delivery fails or is slow, it blocks the user's like/comment action. A queue decouples them — the action completes instantly, notifications are processed async in the background.
+**Why this decision:** Notification creation is secondary to the user's action. Queueing it
+keeps notification persistence out of the request's critical path, buffers events for
+retry when processing fails, and reuses Redis already used by the feed cache. The action
+itself remains synchronous and authoritative in SQL.
 
-**What to build:**
-- Publish events (like, follow, comment) to a Redis queue or Kafka topic
-- A background worker consumes the queue and creates notifications
-- FastAPI has `BackgroundTasks` as a simple first step before full Kafka
+**Trade-offs / next step:** The current design is at-least-once and has a gap between the
+action commit and event enqueue; a process failure in that gap can lose the notification.
+Retries may also create duplicates. For stronger guarantees or independent scaling, use a
+transactional outbox and a separately deployed worker.
 
 ---
 

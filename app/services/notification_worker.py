@@ -62,8 +62,12 @@ async def run_notification_worker() -> None:
                     count=10,
                     block=1000,
                 )
+                if not records:
+                    continue
 
             for stream, messages in records:
+                if not messages:
+                    continue
                 for message_id, fields in messages:
                     try:
                         await asyncio.to_thread(persist_notification, fields)

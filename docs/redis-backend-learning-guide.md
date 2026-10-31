@@ -184,6 +184,28 @@ The worker creates a fresh SQLAlchemy session for each notification via
 write fails, the worker logs the error and leaves the entry pending; a later
 `XAUTOCLAIM` can take over entries idle for at least 30 seconds.
 
+### Decision record: queue notification work
+
+**Decision:** Keep likes, comments, and follows as synchronous SQL writes, then enqueue
+notification events for a background worker using FastAPI `BackgroundTasks` and a Redis
+Stream.
+
+**Why:** The action itself is the user's primary request and must be committed before the
+API reports success. Creating a separate notification is secondary work, so it should not
+add its database-write time to that request. A queue also buffers events when the worker or
+database is temporarily slow, and Redis consumer groups let the worker retry messages that
+were delivered but not successfully processed. Redis was already part of the project for
+feed caching, so Redis Streams add this learning feature without introducing another
+broker.
+
+**Trade-offs:** This is a practical learning-project design, not a guarantee of
+exactly-once or lossless delivery. In particular, the app can stop after committing the
+action but before publishing its event, and retries can create duplicate notifications.
+The SQL database remains the source of truth for actions and notification records; Redis
+is only the intermediate event queue. If notifications later require stronger delivery
+guarantees or independent scaling, use a transactional outbox and run the consumer as a
+separate worker service.
+
 ## Reliability boundaries to understand
 
 This is a useful starter design, but it does not promise exactly-once processing:
