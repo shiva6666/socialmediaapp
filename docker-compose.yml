@@ -10,15 +10,60 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U insta -d insta_clone"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6380:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes  # persist data to disk
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://insta:insta_secret@db:5432/insta_clone
+      SECRET_KEY: ${SECRET_KEY:-local-development-only-change-me}
+      REDIS_URL: redis://redis:6379/0
+      MEDIA_DIR: uploads
+      AUTO_CREATE_TABLES: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - media_uploads:/app/uploads
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
 
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -34,3 +79,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  media_uploads:

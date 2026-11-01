@@ -16,35 +16,75 @@ its [editable Excalidraw architecture diagram](docs/redis-backend-architecture.e
 For the request-by-request rate-limit flow, see the
 [rate-limiting data-flow diagram](docs/rate-limiting-data-flow.excalidraw).
 
-## Run locally
+## Run locally with Docker
+
+```bash
+cp -n .env.example .env  # creates .env only if it does not already exist
+# Replace SECRET_KEY in .env with a long random value before using real accounts.
+docker compose up --build
+```
+
+Compose starts PostgreSQL, Redis, pgAdmin, and the FastAPI app. It waits for PostgreSQL and
+Redis to become healthy, runs `alembic upgrade head`, then starts the API. Open
+`http://127.0.0.1:8000/docs` for the interactive API docs. Uploaded media and database
+data are stored in Docker volumes.
+
+Local service addresses:
+
+| Service | Address |
+|---|---|
+| FastAPI docs | `http://127.0.0.1:8000/docs` |
+| pgAdmin | `http://127.0.0.1:5050` |
+| PostgreSQL | `localhost:5433` |
+| Redis | `localhost:6380` |
+
+Useful commands:
+
+```bash
+docker compose logs -f app  # follow API logs
+docker compose down         # stop services; preserve data volumes
+docker compose down -v      # stop services and delete database, Redis, and media data
+```
+
+The Compose file uses development database credentials and a development-only fallback
+`SECRET_KEY`. Set a strong `SECRET_KEY` in `.env` before using real accounts; do not use
+the default credentials for a public deployment.
+
+### Run the API directly (without Docker)
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
-cp .env.example .env
-# Set SECRET_KEY in .env to a long random value before using real accounts.
-docker compose up -d redis
+cp -n .env.example .env  # preserve an existing .env file
+docker compose up -d db redis
 uvicorn app.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/docs` for the interactive API docs.
+For this mode, configure `DATABASE_URL` in `.env` with `localhost:5433` and `REDIS_URL`
+with `localhost:6380`. Compose publishes its Redis on port 6380 to avoid conflicting with
+a Redis server already listening on the default port. Local development creates missing
+tables automatically by default.
 
 The home feed ranks posts by engagement and recency: likes contribute 2 points each,
-comments 3 points each, posts from the last 24 hours get a 10-point bonus, and posts from
-the last 7 days get a 5-point bonus. Ties are ordered newest first. Redis caches each
-user's paginated feed for `FEED_CACHE_TTL_SECONDS` (60 seconds by default). Post, profile,
-media, follow, like, and comment changes invalidate affected feed caches.
+comments 3 points each, posts from the last 24 hours get a 10-point bonus, and posts older
+than 24 hours but within the last 7 days get a 5-point bonus. These bonuses are not
+stacked. Ties are ordered newest first. This is a shared, non-personalized score; it does
+not yet use a viewer's interests or analytics events. Redis caches each user's paginated
+feed for `FEED_CACHE_TTL_SECONDS` (60 seconds by default). Post, profile, media, follow,
+like, and comment changes invalidate affected feed caches so ranking is recalculated.
 Notification events are added to a Redis Stream after the API response and persisted by a
 background consumer; if Redis is unavailable while enqueueing, the task logs the failure
 and attempts to write the notification directly to the database. Configure Redis with
 `REDIS_URL`. Stream delivery is at-least-once: the consumer acknowledges events after the
 database commit, so an interruption between those steps can result in a duplicate notification.
 API requests are rate limited per client IP using Redis: the default is 100 requests per
-minute, login is limited to 5 per minute, and registration to 3 per hour. Configure these
-limits with `DEFAULT_RATE_LIMIT`, `LOGIN_RATE_LIMIT`, and `REGISTER_RATE_LIMIT`. Since
-rate-limit counters are stored in Redis, requests fail closed with `503 Service
-Unavailable` if Redis cannot be reached.
+minute, login is limited to 5 per minute, and registration to 3 per hour. Exceeding a
+limit returns HTTP `429`; responses include rate-limit headers. Invalid login and
+registration attempts count toward their limits. Configure the limits with
+`DEFAULT_RATE_LIMIT`, `LOGIN_RATE_LIMIT`, and `REGISTER_RATE_LIMIT`. Since counters are
+stored in Redis, requests fail closed with `503 Service Unavailable` if Redis cannot be
+reached.
 
 ## API endpoints
 
