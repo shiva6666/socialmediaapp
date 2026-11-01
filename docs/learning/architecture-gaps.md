@@ -20,7 +20,7 @@
 
 ---
 
-## ❌ Fundamental Missing Pieces
+## Architecture Components and Remaining Gaps
 
 ### ✅ 1. Feed Cache (Redis)
 **What the diagram shows:** Feed Service → Feed Cache (Redis) → Posts DB
@@ -88,17 +88,16 @@ app.mount("/media", StaticFiles(directory=settings.media_dir))
 
 ---
 
-### 🟡 5. Rate Limiting (API Gateway / Load Balancer)
+### ✅ 5. Rate Limiting (application-level)
 **What the diagram shows:** Load Balancer → rate limiting
 
-**What you have:** No rate limiting at all. Any client can hammer your endpoints unlimited times.
+**What you have:** SlowAPI applies Redis-backed, per-client-IP limits: 100 requests per
+minute by default, 5 login attempts per minute, and 3 registrations per hour. Limits can be
+configured with `DEFAULT_RATE_LIMIT`, `LOGIN_RATE_LIMIT`, and `REGISTER_RATE_LIMIT`.
 
-**Why it matters:** Without rate limiting, your app is open to abuse — spam registrations, brute-force login attacks, API scraping.
-
-**What to build:**
-- `slowapi` library (Redis-backed rate limiter for FastAPI)
-- Apply stricter limits on auth endpoints (`POST /auth/login`, `POST /auth/register`)
-- Looser limits on read endpoints
+**Scope note:** This is application-level rate limiting, not a separate API gateway or
+load balancer. When deployed behind a proxy, configure trusted proxy handling so client IPs
+are identified correctly.
 
 ---
 
@@ -130,17 +129,16 @@ app.mount("/media", StaticFiles(directory=settings.media_dir))
 
 ---
 
-## 🗺️ Recommended Learning Order
+## 🗺️ Suggested Next Steps
 
 ```mermaid
 flowchart LR
-    A["🔴 Rate Limiting\n(slowapi)"] --> B["🔴 Message Queue\n(Redis + BackgroundTasks)"]
-    B --> C["🔴 Feed Cache\n(Redis)"]
-    C --> D["🟡 Object Storage\n(S3 / R2)"]
-    D --> E["🟡 Push Notifications\n(FCM)"]
-    E --> F["🟡 Feed Ranking\n(weighted score)"]
-    F --> G["🟠 Stream Processing\n(Kafka + ClickHouse)"]
+    A["Alembic migrations\n(deployment foundation)"] --> B["Object Storage + CDN\n(S3 / R2)"]
+    B --> C["Push Notifications\n(FCM / Web Push)"]
+    C --> D["Feed Ranking\n(weighted score)"]
+    D --> E["Analytics Processing\n(Kafka + warehouse)"]
 ```
 
 > [!TIP]
-> **Start with Redis** — it unlocks both the Message Queue and Feed Cache in one setup. It's also the single biggest leap from "tutorial backend" to "production backend" thinking.
+> Redis already powers the feed cache and notification queue. For deployment readiness,
+> add database migrations before introducing more infrastructure.

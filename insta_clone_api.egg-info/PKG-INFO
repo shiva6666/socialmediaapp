@@ -15,3 +15,4 @@ Requires-Dist: Pillow<13.0,>=10.4
 Requires-Dist: psycopg2-binary<3.0,>=2.9
 Requires-Dist: alembic<2.0,>=1.13
 Requires-Dist: redis<9.0,>=5.0
+Requires-Dist: slowapi<1.0,>=0.1.9

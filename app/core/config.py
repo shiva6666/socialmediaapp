@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     media_dir: str = "uploads"
     redis_url: str = "redis://localhost:6379/0"
     feed_cache_ttl_seconds: int = 60
+    default_rate_limit: str = "100/minute"
+    login_rate_limit: str = "5/minute"
+    register_rate_limit: str = "3/hour"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

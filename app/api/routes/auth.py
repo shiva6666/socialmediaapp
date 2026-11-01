@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password, verify_password
 from app.dependencies.auth import get_current_user
 from app.models.user import User
@@ -14,7 +16,13 @@ router = APIRouter()
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> User:
+@limiter.limit(settings.register_rate_limit)
+def register(
+    request: Request,
+    response: Response,
+    payload: RegisterRequest,
+    db: Session = Depends(get_db),
+) -> User:
     existing_user = db.scalar(
         select(User).where(
             or_(User.email == payload.email, User.username == payload.username)
@@ -46,7 +54,13 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> User:
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+@limiter.limit(settings.login_rate_limit)
+def login(
+    request: Request,
+    response: Response,
+    payload: LoginRequest,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
     user = db.scalar(select(User).where(User.email == payload.email))
     if user is None or not verify_password(payload.password, user.password_hash):
         raise HTTPException(

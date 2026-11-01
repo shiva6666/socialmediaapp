@@ -13,6 +13,8 @@ single FastAPI application; its features are modules in that app rather than sep
 For a walkthrough of the current Redis feed cache, notification flow, and backend design
 choices, see the [Redis backend learning guide](docs/redis-backend-learning-guide.md) and
 its [editable Excalidraw architecture diagram](docs/redis-backend-architecture.excalidraw).
+For the request-by-request rate-limit flow, see the
+[rate-limiting data-flow diagram](docs/rate-limiting-data-flow.excalidraw).
 
 ## Run locally
 
@@ -35,6 +37,11 @@ background consumer; if Redis is unavailable while enqueueing, the task logs the
 and attempts to write the notification directly to the database. Configure Redis with
 `REDIS_URL`. Stream delivery is at-least-once: the consumer acknowledges events after the
 database commit, so an interruption between those steps can result in a duplicate notification.
+API requests are rate limited per client IP using Redis: the default is 100 requests per
+minute, login is limited to 5 per minute, and registration to 3 per hour. Configure these
+limits with `DEFAULT_RATE_LIMIT`, `LOGIN_RATE_LIMIT`, and `REGISTER_RATE_LIMIT`. Since
+rate-limit counters are stored in Redis, requests fail closed with `503 Service
+Unavailable` if Redis cannot be reached.
 
 ## API endpoints
 
