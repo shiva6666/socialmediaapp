@@ -54,7 +54,8 @@ afterward.
 
 The feed uses a common pattern called **cache-aside**. The API checks the cache itself,
 falls back to the database when the entry is missing, then fills the cache with the
-database result.
+database result. On a cache miss, the SQL query ranks followed accounts' and your own posts
+by engagement and recency before applying pagination.
 
 ```mermaid
 sequenceDiagram
@@ -66,7 +67,7 @@ sequenceDiagram
 
     Browser->>Route: Request feed (limit, offset, bearer token)
     Route->>Route: Resolve current user
-    Route->>Cache: GET posts:feed:{user_id}:{limit}:{offset}
+    Route->>Cache: GET posts:feed:{user_id}:{limit}:{offset}:v2
     alt Cache hit and valid JSON
         Cache-->>Route: Serialized list of PostRead objects
         Route-->>Browser: 200 + feed
@@ -85,10 +86,10 @@ sequenceDiagram
 from the current user's ID, page size, and offset:
 
 ```text
-posts:feed:42:20:0
+posts:feed:42:20:0:v2
 ```
 
-The user ID prevents one person's personalized feed from being returned to another person.
+The user ID prevents one person's feed from being returned to another person.
 The pagination values prevent page 1 being mistaken for page 2. This is the cache equivalent
 of including every input that can change a function's output.
 
@@ -114,7 +115,7 @@ serving an old feed after a post or follow changes?
 
 ```mermaid
 flowchart TD
-    Change["Post created / edited / deleted\nor media/profile changed"] --> Commit["Commit authoritative change to SQL"]
+    Change["Post / media / profile changed\nor like / comment added / removed"] --> Commit["Commit authoritative change to SQL"]
     Commit --> Followers["Find followers of the post author\n(if author feed content changed)"]
     Followers --> Keys["Delete feed keys for author + followers"]
     Keys --> Next["Next feed request misses cache\nand reads fresh SQL data"]
@@ -129,9 +130,31 @@ clears feed keys for those users and the author. A follow/unfollow only changes 
 user's membership, so only that user's feed needs invalidation.
 
 This uses **invalidation**, not an attempt to edit cached feed JSON in place. Updating
-serialized pages is complex: a new post may shift every offset page, and the same post can
-appear in many users' feeds. Deleting cache entries lets the existing SQL query rebuild the
-correct page on demand.
+serialized pages is complex: a new post or changed engagement score may shift every offset
+page, and the same post can appear in many users' feeds. Deleting cache entries lets the
+existing SQL query rebuild the correct page on demand. Likes and comments also invalidate
+the post author's feed and their followers' feeds, since these changes affect ranking.
+
+### Feed ranking: a simple weighted score
+
+The home feed's SQL query calculates a score for every eligible post:
+
+```text
+2 points per like
++ 3 points per comment
++ 10 points if posted within the last 24 hours
++ 5 points if posted within the last 7 days
+```
+
+Posts are ordered by score, then newest timestamp and ID to make ties deterministic.
+Ranking happens in SQL before `LIMIT` and `OFFSET`, so pagination returns the highest
+scoring posts for that page rather than sorting only a previously fetched page. The Redis
+cache key uses a new version so previously cached chronological pages are not served as
+ranked results.
+
+This is a transparent baseline, not a personalized recommendation model. It does not yet
+use a viewer's past interactions or analytics events, and the weights can be tuned as the
+app gains usage data.
 
 Redis key scans here use `SCAN` through `scan_iter`, not the blocking `KEYS` command. The
 current implementation still performs a scan per affected user, which is straightforward

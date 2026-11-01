@@ -1,9 +1,10 @@
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.config import settings
@@ -16,7 +17,9 @@ from app.core.feed_cache import (
     invalidate_feed_cache,
 )
 from app.dependencies.auth import get_current_user
+from app.models.comment import Comment
 from app.models.follow import Follow
+from app.models.like import Like
 from app.models.post import Post
 from app.models.user import User
 from app.schemas.post import PostCreate, PostRead, PostUpdate
@@ -57,11 +60,30 @@ def read_feed(
             invalidate_feed_cache([current_user.id])
 
     followed_user_ids = select(Follow.following_id).where(Follow.follower_id == current_user.id)
+    like_count = (
+        select(func.count(Like.user_id))
+        .where(Like.post_id == Post.id)
+        .correlate(Post)
+        .scalar_subquery()
+    )
+    comment_count = (
+        select(func.count(Comment.id))
+        .where(Comment.post_id == Post.id)
+        .correlate(Post)
+        .scalar_subquery()
+    )
+    now = datetime.now(timezone.utc)
+    recency_score = case(
+        (Post.created_at >= now - timedelta(hours=24), 10),
+        (Post.created_at >= now - timedelta(days=7), 5),
+        else_=0,
+    )
+    ranking_score = (like_count * 2) + (comment_count * 3) + recency_score
     query = (
         select(Post)
         .options(joinedload(Post.author), selectinload(Post.media))
         .where(Post.author_id.in_(followed_user_ids) | (Post.author_id == current_user.id))
-        .order_by(Post.created_at.desc(), Post.id.desc())
+        .order_by(ranking_score.desc(), Post.created_at.desc(), Post.id.desc())
         .offset(offset)
         .limit(limit)
     )

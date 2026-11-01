@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     default_rate_limit: str = "100/minute"
     login_rate_limit: str = "5/minute"
     register_rate_limit: str = "3/hour"
+    auto_create_tables: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

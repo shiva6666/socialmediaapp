@@ -11,7 +11,7 @@
 |---|---|
 | Authentication Service (Login, Signup, JWT) | `app/api/routes/auth.py` + `app/core/security.py` |
 | User DB (Users, profiles, followers) | `app/models/user.py` + `app/models/follow.py` |
-| Feed Service (Home feed) | `GET /posts/feed` — chronological SQL query |
+| Feed Service (Home feed) | `GET /posts/feed` — engagement and recency ranked SQL query |
 | Posts DB (Post metadata, likes, comments) | `app/models/post.py`, `like.py`, `comment.py` |
 | Media Service (Upload) | `app/api/routes/media.py` — local file storage |
 | Interaction Service (Like, Comment, Follow) | `app/api/routes/interactions.py` + `follows.py` |
@@ -99,19 +99,31 @@ configured with `DEFAULT_RATE_LIMIT`, `LOGIN_RATE_LIMIT`, and `REGISTER_RATE_LIM
 load balancer. When deployed behind a proxy, configure trusted proxy handling so client IPs
 are identified correctly.
 
+### ✅ Database schema migrations (Alembic)
+**What you have:** An initial schema migration and an Alembic environment configured to
+read the application's `DATABASE_URL`. `alembic upgrade head` applies the schema; use
+`alembic revision --autogenerate -m "describe the change"` to prepare a migration after
+changing models, then review that file before applying it.
+
+**Deployment note:** Set `AUTO_CREATE_TABLES=false` so the app does not create schema
+automatically at startup; apply Alembic migrations as a deployment step instead.
+
 ---
 
-### 🟡 6. Feed Ranking (Analytics & ML)
+### 🟡 6. Advanced Feed Ranking (Analytics & ML)
 **What the diagram shows:** Analytics & ML → Insights, feed ranking, recommendations
 
-**What you have:** Feed is purely **chronological** (`ORDER BY created_at DESC`). No ranking, no recommendations.
+**What you have:** The home feed uses a basic weighted score: 2 points per like, 3 per
+comment, plus a 10-point bonus for posts newer than 24 hours or a 5-point bonus for posts
+newer than 7 days. Ties are chronological. This score is not personalized and does not
+include analytics events.
 
 **Why it matters:** Instagram's "For You" feed is ranked by engagement probability. Your analytics events (`post_viewed`, etc.) are being captured but never used for anything.
 
 **What to build:**
-- Score posts by recency + like count + comment count + follow closeness
-- Use captured analytics events to weight content
-- Start simple: a weighted SQL score, then graduate to an ML model
+- Add personalization using followed-account affinity and user interactions
+- Use captured analytics events to tune ranking
+- Evaluate ranking quality and add recommendations
 
 ---
 

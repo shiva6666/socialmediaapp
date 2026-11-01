@@ -2,7 +2,7 @@
 
 A modular FastAPI starter for a social app. The first feature is account registration,
 login, and retrieval of the authenticated user's profile. Users can also follow accounts,
-publish text posts, read a chronological feed, interact with posts, and receive in-app notifications.
+publish text posts, read a ranked feed, interact with posts, and receive in-app notifications.
 
 ## Architecture sketch
 
@@ -30,8 +30,11 @@ uvicorn app.main:app --reload
 
 Open `http://127.0.0.1:8000/docs` for the interactive API docs.
 
-Redis caches each user's paginated feed for `FEED_CACHE_TTL_SECONDS` (60 seconds by
-default). Post, profile, media, and follow changes invalidate affected feed caches.
+The home feed ranks posts by engagement and recency: likes contribute 2 points each,
+comments 3 points each, posts from the last 24 hours get a 10-point bonus, and posts from
+the last 7 days get a 5-point bonus. Ties are ordered newest first. Redis caches each
+user's paginated feed for `FEED_CACHE_TTL_SECONDS` (60 seconds by default). Post, profile,
+media, follow, like, and comment changes invalidate affected feed caches.
 Notification events are added to a Redis Stream after the API response and persisted by a
 background consumer; if Redis is unavailable while enqueueing, the task logs the failure
 and attempts to write the notification directly to the database. Configure Redis with
@@ -57,7 +60,7 @@ Unavailable` if Redis cannot be reached.
 - `GET /api/v1/notifications` — list your notifications (authentication required; supports `unread_only`, `limit`, and `offset`)
 - `PATCH /api/v1/notifications/{notification_id}/read` — mark one notification as read (authentication required)
 - `POST /api/v1/analytics/events` — record an authenticated user event such as `post_viewed`
-- `GET /api/v1/posts/feed` — list your posts and posts from accounts you follow (authentication required)
+- `GET /api/v1/posts/feed` — list ranked posts from you and accounts you follow (authentication required)
 - `GET /api/v1/posts/users/{username}` — list a user's public posts
 - `POST /api/v1/users/{username}/follow` — follow a user (authentication required)
 - `DELETE /api/v1/users/{username}/follow` — unfollow a user (authentication required)
@@ -69,6 +72,22 @@ Unavailable` if Redis cannot be reached.
 - `DELETE /api/v1/posts/{post_id}/comments/{comment_id}` — delete your comment (authentication required)
 - `GET /health` — health check
 
-The default database is a local SQLite file. Set `DATABASE_URL` to use PostgreSQL. Tables
-are created automatically for local development; add Alembic migrations before deploying.
-Uploaded images are stored in `MEDIA_DIR` (default `uploads/`) and served from `/media/`.
+The default database is a local SQLite file. Set `DATABASE_URL` to use PostgreSQL. For
+local development, `AUTO_CREATE_TABLES=true` creates missing tables on startup. For a
+deployment, set `AUTO_CREATE_TABLES=false` and apply schema changes with Alembic before
+starting the app:
+
+```bash
+alembic upgrade head
+```
+
+When a model changes, create a migration, review the generated file, and then apply it:
+
+```bash
+alembic revision --autogenerate -m "describe the schema change"
+alembic upgrade head
+```
+
+The initial schema migration is already in `alembic/versions/`. Alembic reads
+`DATABASE_URL` from the same settings as the app. Uploaded images are stored in `MEDIA_DIR`
+(default `uploads/`) and served from `/media/`.

@@ -28,9 +28,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Convenient for local development. Use Alembic migrations in deployed environments.
+    # Convenient for local development; deployed environments should apply Alembic migrations.
     Path(settings.media_dir).mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(bind=engine)
+    if settings.auto_create_tables:
+        Base.metadata.create_all(bind=engine)
     notification_worker = asyncio.create_task(run_notification_worker())
     try:
         yield

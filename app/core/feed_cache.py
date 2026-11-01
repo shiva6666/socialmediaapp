@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def feed_cache_key(user_id: int, limit: int, offset: int) -> str:
-    return f"posts:feed:{user_id}:{limit}:{offset}"
+    return f"posts:feed:{user_id}:{limit}:{offset}:v2"
 
 
 def get_cached_feed(key: str) -> str | None:
