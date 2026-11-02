@@ -66,6 +66,18 @@ with `localhost:6380`. Compose publishes its Redis on port 6380 to avoid conflic
 a Redis server already listening on the default port. Local development creates missing
 tables automatically by default.
 
+### Run tests
+
+The test suite uses Python's standard-library `unittest` runner and does not require live
+database or Redis services. Run all tests with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The smoke tests cover application module imports and core behaviors, while
+`tests/test_feed_cache.py` covers versioned feed-cache keys and Redis failure handling.
+
 The home feed ranks posts by engagement and recency: likes contribute 2 points each,
 comments 3 points each, posts from the last 24 hours get a 10-point bonus, and posts older
 than 24 hours but within the last 7 days get a 5-point bonus. These bonuses are not
