@@ -10,11 +10,11 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.feed_cache import (
+    bump_author_feed_version,
     cache_feed,
+    discard_cached_feed,
     feed_cache_key,
     get_cached_feed,
-    invalidate_author_feeds,
-    invalidate_feed_cache,
 )
 from app.dependencies.auth import get_current_user
 from app.models.comment import Comment
@@ -39,7 +39,7 @@ def create_post(
     db.add(post)
     db.commit()
     db.refresh(post)
-    invalidate_author_feeds(db, current_user.id)
+    bump_author_feed_version(current_user.id)
     return post
 
 
@@ -50,16 +50,22 @@ def read_feed(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[PostRead]:
-    cache_key = feed_cache_key(current_user.id, limit, offset)
-    cached_feed = get_cached_feed(cache_key)
-    if cached_feed is not None:
-        try:
-            return feed_adapter.validate_json(cached_feed)
-        except (ValueError, ValidationError):
-            logger.warning("Discarding invalid cached feed for user %s", current_user.id)
-            invalidate_feed_cache([current_user.id])
+    followed_user_ids = list(
+        db.scalars(
+            select(Follow.following_id).where(Follow.follower_id == current_user.id)
+        ).all()
+    )
+    author_ids = [current_user.id, *followed_user_ids]
+    cache_key = feed_cache_key(current_user.id, author_ids, limit, offset)
+    if cache_key is not None:
+        cached_feed = get_cached_feed(cache_key)
+        if cached_feed is not None:
+            try:
+                return feed_adapter.validate_json(cached_feed)
+            except (ValueError, ValidationError):
+                logger.warning("Discarding invalid cached feed for user %s", current_user.id)
+                discard_cached_feed(cache_key)
 
-    followed_user_ids = select(Follow.following_id).where(Follow.follower_id == current_user.id)
     like_count = (
         select(func.count(Like.user_id))
         .where(Like.post_id == Post.id)
@@ -82,7 +88,7 @@ def read_feed(
     query = (
         select(Post)
         .options(joinedload(Post.author), selectinload(Post.media))
-        .where(Post.author_id.in_(followed_user_ids) | (Post.author_id == current_user.id))
+        .where(Post.author_id.in_(author_ids))
         .order_by(ranking_score.desc(), Post.created_at.desc(), Post.id.desc())
         .offset(offset)
         .limit(limit)
@@ -91,11 +97,12 @@ def read_feed(
         PostRead.model_validate(post)
         for post in db.scalars(query).unique().all()
     ]
-    cache_feed(
-        cache_key,
-        feed_adapter.dump_json(feed).decode("utf-8"),
-        settings.feed_cache_ttl_seconds,
-    )
+    if cache_key is not None:
+        cache_feed(
+            cache_key,
+            feed_adapter.dump_json(feed).decode("utf-8"),
+            settings.feed_cache_ttl_seconds,
+        )
     return feed
 
 
@@ -140,7 +147,7 @@ def update_post(
     post.body = payload.body
     db.commit()
     db.refresh(post)
-    invalidate_author_feeds(db, current_user.id)
+    bump_author_feed_version(current_user.id)
     return post
 
 
@@ -163,7 +170,7 @@ def delete_post(
     uploaded_files = [Path(settings.media_dir) / item.file_name for item in post.media]
     db.delete(post)
     db.commit()
-    invalidate_author_feeds(db, author_id)
+    bump_author_feed_version(author_id)
     for uploaded_file in uploaded_files:
         uploaded_file.unlink(missing_ok=True)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

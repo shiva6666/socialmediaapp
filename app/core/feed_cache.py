@@ -1,18 +1,43 @@
+import hashlib
 import logging
 from collections.abc import Iterable
 
 from redis.exceptions import RedisError
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.core.redis import redis_client
-from app.models.follow import Follow
 
 logger = logging.getLogger(__name__)
 
 
-def feed_cache_key(user_id: int, limit: int, offset: int) -> str:
-    return f"posts:feed:{user_id}:{limit}:{offset}:v2"
+def feed_cache_key(
+    user_id: int,
+    author_ids: Iterable[int],
+    limit: int,
+    offset: int,
+) -> str | None:
+    author_ids = sorted(set(author_ids))
+    version_keys = [
+        f"posts:feed:membership-version:{user_id}",
+        *(f"posts:feed:author-version:{author_id}" for author_id in author_ids),
+    ]
+    try:
+        versions = redis_client.mget(version_keys)
+    except RedisError:
+        logger.warning("Redis feed-cache version lookup failed for user %s", user_id, exc_info=True)
+        return None
+
+    membership_version, *author_versions = versions
+    snapshot = ",".join(
+        [
+            f"user:{user_id}:{membership_version or '0'}",
+            *(
+                f"author:{author_id}:{version or '0'}"
+                for author_id, version in zip(author_ids, author_versions, strict=True)
+            ),
+        ]
+    )
+    version_hash = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()[:16]
+    return f"posts:feed:v3:{user_id}:{limit}:{offset}:{version_hash}"
 
 
 def get_cached_feed(key: str) -> str | None:
@@ -30,19 +55,32 @@ def cache_feed(key: str, value: str, ttl_seconds: int) -> None:
         logger.warning("Redis feed-cache write failed for key %s", key, exc_info=True)
 
 
-def invalidate_feed_cache(user_ids: Iterable[int]) -> None:
+def discard_cached_feed(key: str) -> None:
     try:
-        for user_id in set(user_ids):
-            pattern = f"posts:feed:{user_id}:*"
-            keys = list(redis_client.scan_iter(match=pattern))
-            if keys:
-                redis_client.delete(*keys)
+        redis_client.delete(key)
     except RedisError:
-        logger.warning("Redis feed-cache invalidation failed", exc_info=True)
+        logger.warning("Could not discard invalid cached feed %s", key, exc_info=True)
 
 
-def invalidate_author_feeds(db: Session, author_id: int) -> None:
-    follower_ids = db.scalars(
-        select(Follow.follower_id).where(Follow.following_id == author_id)
-    ).all()
-    invalidate_feed_cache([author_id, *follower_ids])
+def bump_author_feed_version(author_id: int) -> None:
+    try:
+        redis_client.incr(f"posts:feed:author-version:{author_id}")
+    except RedisError:
+        logger.warning(
+            "Could not bump feed version for author %s; cached feeds may remain stale "
+            "until their TTL expires",
+            author_id,
+            exc_info=True,
+        )
+
+
+def bump_membership_feed_version(user_id: int) -> None:
+    try:
+        redis_client.incr(f"posts:feed:membership-version:{user_id}")
+    except RedisError:
+        logger.warning(
+            "Could not bump feed membership version for user %s; cached feeds may remain "
+            "stale until their TTL expires",
+            user_id,
+            exc_info=True,
+        )

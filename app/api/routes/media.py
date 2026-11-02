@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.feed_cache import invalidate_author_feeds
+from app.core.feed_cache import bump_author_feed_version
 from app.dependencies.auth import get_current_user
 from app.models.media import MediaAsset
 from app.models.post import Post
@@ -120,7 +120,7 @@ def upload_post_image(
         db.rollback()
         file_path.unlink(missing_ok=True)
         raise
-    invalidate_author_feeds(db, current_user.id)
+    bump_author_feed_version(current_user.id)
     return media
 
 
@@ -149,5 +149,5 @@ def delete_post_image(
     file_path = Path(settings.media_dir) / media.file_name
     db.delete(media)
     db.commit()
-    invalidate_author_feeds(db, current_user.id)
+    bump_author_feed_version(current_user.id)
     file_path.unlink(missing_ok=True)

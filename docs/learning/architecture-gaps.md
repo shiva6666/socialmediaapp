@@ -1,7 +1,9 @@
 # Architecture Gaps — What's Missing
 
 > [!NOTE]
-> Your monolith already implements all the **business logic**. What's missing are the **infrastructure & scalability layers** shown in the diagram.
+> This repository is a modular monolith with working API features and several supporting
+> infrastructure components. The diagram shows a larger target architecture; the sections
+> below distinguish what is implemented from what remains a possible extension.
 
 ---
 
@@ -26,11 +28,16 @@
 **What the diagram shows:** Feed Service → Feed Cache (Redis) → Posts DB
 
 **What you have:** `GET /posts/feed` uses a Redis cache with a TTL and falls back to SQL on a
-cache miss or Redis error. Post, profile, media, and follow changes invalidate affected
-feed caches.
+cache miss or Redis error. Versioned cache keys let post, profile, media, engagement, and
+follow changes invalidate feed pages without deleting keys for every follower.
 
-**Remaining consideration:** The cache is cache-aside, not a pre-built fan-out-on-write
-feed. At larger scale, consider indexing cache keys to make invalidation more efficient.
+**Remaining consideration:** Author changes now have constant Redis write work regardless
+of follower count. Feed reads resolve the followee list and fetch its author versions via
+one Redis `MGET`, so read-side version work grows with the number of followed accounts.
+If Redis cannot provide version data, the request bypasses the cache. Version counters can
+be lost when Redis data is flushed or restarted without persistence; old cache entries then
+remain addressable until their TTL expires. The cache is still cache-aside, not a pre-built
+fan-out-on-write feed.
 
 ### ✅ 2. Notification Queue (Redis Streams)
 **What the diagram shows:** Notification Service → Message Queue → Notification Workers
@@ -130,7 +137,9 @@ include analytics events.
 ### 🟠 7. Stream Processing for Analytics
 **What the diagram shows:** Analytics Pipeline → Stream Processing (Kafka/Spark) → Analytics DB (ClickHouse/BigQuery)
 
-**What you have:** Analytics events are written directly to the same SQLite DB as everything else. No processing pipeline.
+**What you have:** Analytics events are written directly to the configured application SQL
+database (SQLite by default, PostgreSQL in the Docker setup). There is no separate
+processing pipeline or analytics store.
 
 **Why it matters:** At scale, analytics queries (aggregations, funnels) would lock up your main DB. A separate analytics warehouse processes events async.
 
@@ -141,16 +150,17 @@ include analytics events.
 
 ---
 
-## 🗺️ Suggested Next Steps
+## Suggested learning steps
 
 ```mermaid
 flowchart LR
-    A["Alembic migrations\n(deployment foundation)"] --> B["Object Storage + CDN\n(S3 / R2)"]
-    B --> C["Push Notifications\n(FCM / Web Push)"]
-    C --> D["Feed Ranking\n(weighted score)"]
-    D --> E["Analytics Processing\n(Kafka + warehouse)"]
+    A["Test the current flows"] --> B["Notification idempotency / outbox"]
+    B --> C["Object storage + CDN"]
+    C --> D["Push notifications"]
+    D --> E["Personalized ranking + analytics pipeline"]
 ```
 
 > [!TIP]
-> Redis already powers the feed cache and notification queue. For deployment readiness,
-> add database migrations before introducing more infrastructure.
+> Alembic migrations, Redis feed caching, Redis Streams, and application rate limiting
+> already exist. Add tests around these behaviors before extending the system with more
+> infrastructure; review and apply migrations as part of schema changes.

@@ -67,7 +67,9 @@ sequenceDiagram
 
     Browser->>Route: Request feed (limit, offset, bearer token)
     Route->>Route: Resolve current user
-    Route->>Cache: GET posts:feed:{user_id}:{limit}:{offset}:v2
+    Route->>DB: Load followed-author IDs
+    Route->>Cache: MGET membership + author versions
+    Route->>Cache: GET versioned feed key (if Redis is available)
     alt Cache hit and valid JSON
         Cache-->>Route: Serialized list of PostRead objects
         Route-->>Browser: 200 + feed
@@ -82,16 +84,20 @@ sequenceDiagram
 
 ### Why the cache key has these parts
 
-`feed_cache_key()` in [app/core/feed_cache.py](../app/core/feed_cache.py) builds a key
-from the current user's ID, page size, and offset:
+`feed_cache_key()` in [app/core/feed_cache.py](../app/core/feed_cache.py) reads a membership
+version for the viewer and an author version for the viewer and each followed author. It
+hashes that version snapshot into a key together with the viewer ID and page size/offset.
+The key shape is:
 
 ```text
-posts:feed:42:20:0:v2
+posts:feed:v3:42:20:0:<version-hash>
 ```
 
-The user ID prevents one person's feed from being returned to another person.
-The pagination values prevent page 1 being mistaken for page 2. This is the cache equivalent
-of including every input that can change a function's output.
+The user ID prevents one person's feed from being returned to another person. Pagination
+values keep pages separate. The version hash changes when follow membership or any followed
+author's feed content changes, so the request uses a fresh key after those updates. If Redis
+cannot return version data, `feed_cache_key()` returns no key and the route reads from SQL
+without trying to cache the result.
 
 The cached value is JSON produced from `PostRead`, not raw ORM objects. ORM objects are
 connected to a live database session and can include relationships or internal state that
@@ -108,7 +114,7 @@ entries even if an invalidation is missed.
 
 Redis is **not** the source of truth for posts. Losing the cache only costs performance.
 
-## Feed writes: invalidate derived data
+## Feed writes: version derived data
 
 Caching makes reads cheaper, but introduces a consistency question: how does the app stop
 serving an old feed after a post or follow changes?
@@ -116,24 +122,30 @@ serving an old feed after a post or follow changes?
 ```mermaid
 flowchart TD
     Change["Post / media / profile changed\nor like / comment added / removed"] --> Commit["Commit authoritative change to SQL"]
-    Commit --> Followers["Find followers of the post author\n(if author feed content changed)"]
-    Followers --> Keys["Delete feed keys for author + followers"]
-    Keys --> Next["Next feed request misses cache\nand reads fresh SQL data"]
+    Commit --> AuthorVersion["Increment author's feed version once"]
+    AuthorVersion --> Next["Followers use a new cache key\non their next feed request"]
 
     Follow["Follow or unfollow changed"] --> FollowCommit["Commit Follow row to SQL"]
-    FollowCommit --> OwnFeed["Delete only the acting user's feed keys"]
-    OwnFeed --> Next
+    FollowCommit --> MembershipVersion["Increment acting user's membership version"]
+    MembershipVersion --> Next
 ```
 
-For author content changes, `invalidate_author_feeds()` finds that author's followers, then
-clears feed keys for those users and the author. A follow/unfollow only changes the acting
-user's membership, so only that user's feed needs invalidation.
+Each feed cache key includes a hash of the version counters for the viewer and the authors
+they follow. Author content or engagement changes increment only that author's counter;
+follow or unfollow increments only the viewer's membership counter. Old entries are not
+deleted immediately and expire through the normal TTL.
 
 This uses **invalidation**, not an attempt to edit cached feed JSON in place. Updating
 serialized pages is complex: a new post or changed engagement score may shift every offset
-page, and the same post can appear in many users' feeds. Deleting cache entries lets the
-existing SQL query rebuild the correct page on demand. Likes and comments also invalidate
-the post author's feed and their followers' feeds, since these changes affect ranking.
+page, and the same post can appear in many users' feeds. A changed version makes the next
+request use a new key, allowing the existing SQL query to rebuild the page on demand.
+Author changes now require constant Redis write work regardless of follower count, instead
+of finding and deleting every follower's keys. The trade-off is on reads: the app first
+loads the viewer's followed-author IDs from SQL, then fetches all their version counters
+plus the viewer's membership counter with one Redis `MGET`. Thus, version lookup cost grows
+with the number of followed accounts. If Redis is unavailable, the app bypasses the cache
+and reads SQL. If a version increment fails after a SQL commit, stale cache data can persist
+until its TTL expires.
 
 ### Feed ranking: a simple weighted score
 
@@ -149,17 +161,12 @@ The home feed's SQL query calculates a score for every eligible post:
 Posts are ordered by score, then newest timestamp and ID to make ties deterministic.
 Ranking happens in SQL before `LIMIT` and `OFFSET`, so pagination returns the highest
 scoring posts for that page rather than sorting only a previously fetched page. The Redis
-cache key uses a new version so previously cached chronological pages are not served as
-ranked results.
+key includes the current version snapshot, so an older page is not reused after a relevant
+author or follow-membership change.
 
 This is a transparent baseline, not a personalized recommendation model. It does not yet
 use a viewer's past interactions or analytics events, and the weights can be tuned as the
 app gains usage data.
-
-Redis key scans here use `SCAN` through `scan_iter`, not the blocking `KEYS` command. The
-current implementation still performs a scan per affected user, which is straightforward
-for a learning project and modest scale. At larger scale, consider versioned feed keys,
-sets of keys indexed by user, or a cache design that avoids broad key scans.
 
 ## Notifications: write now, notify later
 
@@ -288,10 +295,11 @@ the backend flow is:
 1. FastAPI matches `/api/v1/posts/feed` to `read_feed`.
 2. `get_current_user` validates the bearer token and loads the user from SQL.
 3. `get_db` provides a SQLAlchemy session to the route.
-4. `read_feed` builds a cache key from user ID and pagination.
+4. `read_feed` loads followed-author IDs, then asks Redis for the viewer's membership and
+   author version counters. If version lookup succeeds, it builds the paginated cache key.
 5. A cache hit is validated against `PostRead`; otherwise SQLAlchemy runs the feed query.
-6. Pydantic shapes the result, Redis gets a TTL-bound copy, and FastAPI serializes the HTTP
-   response.
+6. When a cache key is available, Pydantic-shaped results are stored with a TTL. FastAPI
+   then serializes the HTTP response.
 
 The key backend shift is that a route is not just a function returning JSON. It coordinates
 validation, identity, transaction scope, domain rules, persistence, caches, and response

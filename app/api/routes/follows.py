@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.feed_cache import invalidate_feed_cache
+from app.core.feed_cache import bump_membership_feed_version
 from app.core.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models.follow import Follow
@@ -38,7 +38,7 @@ def follow_user(
         # A concurrent request may have created the same follow relationship.
         return None
 
-    invalidate_feed_cache([current_user.id])
+    bump_membership_feed_version(current_user.id)
     queue_notification(
         background_tasks,
         recipient_id=target_user.id,
@@ -62,5 +62,5 @@ def unfollow_user(
     if follow:
         db.delete(follow)
         db.commit()
-        invalidate_feed_cache([current_user.id])
+        bump_membership_feed_version(current_user.id)
     return None

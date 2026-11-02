@@ -69,10 +69,16 @@ tables automatically by default.
 The home feed ranks posts by engagement and recency: likes contribute 2 points each,
 comments 3 points each, posts from the last 24 hours get a 10-point bonus, and posts older
 than 24 hours but within the last 7 days get a 5-point bonus. These bonuses are not
-stacked. Ties are ordered newest first. This is a shared, non-personalized score; it does
-not yet use a viewer's interests or analytics events. Redis caches each user's paginated
-feed for `FEED_CACHE_TTL_SECONDS` (60 seconds by default). Post, profile, media, follow,
-like, and comment changes invalidate affected feed caches so ranking is recalculated.
+stacked. Ties are ordered newest first, then by post ID. This is a shared, non-personalized
+score; it does not yet use a viewer's interests or analytics events. Redis caches each
+user's paginated feed for `FEED_CACHE_TTL_SECONDS` (60 seconds by default). Feed cache keys
+include version counters for the viewer's followed authors and follow membership. Author content, profile,
+media, like, or comment changes increment that author's counter; follow changes increment
+the viewer's membership counter. This avoids deleting cache keys for every follower when an
+author changes. Feed reads resolve the followed-author list and fetch its counters in one
+Redis `MGET`, shifting work from writes to reads. If Redis is unavailable, the feed falls
+back to SQL; if a version increment fails, an old cache entry can remain visible until its
+TTL expires.
 Notification events are added to a Redis Stream after the API response and persisted by a
 background consumer; if Redis is unavailable while enqueueing, the task logs the failure
 and attempts to write the notification directly to the database. Configure Redis with
@@ -85,6 +91,12 @@ registration attempts count toward their limits. Configure the limits with
 `DEFAULT_RATE_LIMIT`, `LOGIN_RATE_LIMIT`, and `REGISTER_RATE_LIMIT`. Since counters are
 stored in Redis, requests fail closed with `503 Service Unavailable` if Redis cannot be
 reached.
+
+Feed pages are not deleted when content changes. A changed author or membership version
+produces a different cache key, and unused pages expire through the TTL. If Redis cannot
+provide version counters, the request skips feed caching and reads from SQL. If Redis loses
+its version counters while old feed entries remain, those entries can become addressable
+again until they expire.
 
 ## API endpoints
 
@@ -130,4 +142,6 @@ alembic upgrade head
 
 The initial schema migration is already in `alembic/versions/`. Alembic reads
 `DATABASE_URL` from the same settings as the app. Uploaded images are stored in `MEDIA_DIR`
-(default `uploads/`) and served from `/media/`.
+(default `uploads/`) and served from `/media/`. Uploads accept JPEG, PNG, and WebP images up
+to 10 MB; dimensions are limited to 25 million pixels and animated images are rejected.
+Images are normalized before they are written to local storage.

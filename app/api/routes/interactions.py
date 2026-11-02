@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
-from app.core.feed_cache import invalidate_author_feeds
+from app.core.feed_cache import bump_author_feed_version
 from app.dependencies.auth import get_current_user
 from app.models.comment import Comment
 from app.models.like import Like
@@ -34,7 +34,7 @@ def like_post(
     if existing_like is None:
         db.add(Like(user_id=current_user.id, post_id=post_id))
         db.commit()
-        invalidate_author_feeds(db, post.author_id)
+        bump_author_feed_version(post.author_id)
         queue_notification(
             background_tasks,
             recipient_id=post.author_id,
@@ -56,7 +56,7 @@ def unlike_post(
     if like is not None:
         db.delete(like)
         db.commit()
-        invalidate_author_feeds(db, post.author_id)
+        bump_author_feed_version(post.author_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -84,7 +84,7 @@ def create_comment(
     db.add(comment)
     db.commit()
     db.refresh(comment)
-    invalidate_author_feeds(db, post.author_id)
+    bump_author_feed_version(post.author_id)
     queue_notification(
         background_tasks,
         recipient_id=post.author_id,
@@ -134,5 +134,5 @@ def delete_comment(
     post = get_post_or_404(post_id, db)
     db.delete(comment)
     db.commit()
-    invalidate_author_feeds(db, post.author_id)
+    bump_author_feed_version(post.author_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
